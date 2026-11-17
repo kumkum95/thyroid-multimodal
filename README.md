@@ -154,11 +154,52 @@ Eyeball the proposal, then hard-code it. Two things to verify on day one:
 2. Whether nodule size is present. If yes, add it — but confirm DDTI and
    Stanford have it too, or external validation breaks.
 
-## Hardware note
+## Hardware and Kaggle GPU
 
-`torch` here is CPU-only. M0–M2 are tabular and run in seconds. M3–M6 need an
-EfficientNet-B4 over ~9.5k images and are not practical on CPU — arrange GPU
-access (Colab/Kaggle will do) before week 2.
+Local `torch` is CPU-only. M0–M2 are tabular and run in seconds. M3–M6 need an
+EfficientNet-B4 over ~9.5k images, so they run on Kaggle's GPU runtime.
+
+```bash
+python scripts/kaggle_push.py             # push and poll until done
+python scripts/kaggle_push.py --status    # status only
+python scripts/kaggle_push.py --pull      # fetch output to outputs/kaggle/
+```
+
+Kernel: `choudhary15/dex-thyroid-train` (private, GPU + internet enabled).
+
+`kaggle/run_kaggle.py` clones this repo rather than carrying pasted notebook
+cells, so every run is reproducible from a commit SHA. Set `DEX_COMMIT` to pin
+one. It writes `outputs/run_manifest.json` recording the GPU model, VRAM and
+torch/CUDA versions — a result without its runtime is not reproducible, and a
+GPU kernel that silently fell back to CPU otherwise just looks slow.
+
+Stages: `week1` (tabular, verifies the whole chain on Kaggle) and `image`
+(M3–M6, **refuses to run without a visible GPU**).
+
+### Getting ThyroidXL onto Kaggle
+
+The kernel prefers an attached Kaggle Dataset and falls back to the synthetic
+cohort. Two ways to supply the real data:
+
+1. **Upload as a private Kaggle Dataset** (recommended). Download from Hugging
+   Face locally, then:
+   ```bash
+   kaggle datasets init -p data/thyroidxl
+   # edit data/thyroidxl/dataset-metadata.json -> slug "thyroidxl"
+   kaggle datasets create -p data/thyroidxl --dir-mode zip
+   ```
+   Then add `"choudhary15/thyroidxl"` to `dataset_sources` in
+   `kaggle/kernel-metadata.json`.
+
+2. **Download in-kernel from Hugging Face.** ThyroidXL is gated, so store your
+   HF token as a Kaggle Secret (Add-ons → Secrets) rather than putting it in
+   code, and read it with `UserSecretsClient`.
+
+Keep the dataset **private** either way: you accepted ThyroidXL's terms as an
+individual, and re-publishing it would likely breach them.
+
+> Kaggle free GPU quota is ~30 h/week, and a session is capped at 12 h. Budget
+> M3–M6 × 5 seeds accordingly, and checkpoint so a timeout is resumable.
 
 ## Comparison targets
 
