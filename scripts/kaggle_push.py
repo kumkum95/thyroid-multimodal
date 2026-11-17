@@ -95,7 +95,17 @@ def build_env(profile: str | None) -> dict[str, str]:
     """
     env = dict(os.environ)
     cfg = config_dir(profile)
+
+    # An inherited KAGGLE_API_TOKEN outranks every credential file, including
+    # ~/.kaggle/access_token, and a stale value there authenticates as the wrong
+    # account or silently falls through to OAuth. The variable is therefore
+    # always dropped first and re-set below only when this profile owns a token.
+    env.pop("KAGGLE_API_TOKEN", None)
+
     if not profile:
+        default_token = Path.home() / ".kaggle" / "access_token"
+        if default_token.exists():
+            env["KAGGLE_API_TOKEN"] = str(default_token)
         return env
 
     if not cfg.exists():
