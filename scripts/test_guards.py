@@ -6,6 +6,7 @@ be impossible to make silently.
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -29,7 +30,20 @@ def check(name: str, condition: bool, detail: str = "") -> None:
 
 
 def main() -> None:
-    root = Path("data/thyroidxl_synthetic")
+    # The cohort directory is an argument, not a relative constant: on Kaggle
+    # the data lands under /kaggle/working/data while the cwd is the cloned
+    # repo, so a hard-coded relative path does not resolve.
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--data", default="data/thyroidxl_synthetic",
+                    help="directory holding train.csv and test.csv")
+    args = ap.parse_args()
+
+    root = Path(args.data)
+    if not root.exists():
+        raise SystemExit(
+            f"cohort directory not found: {root.resolve()}\n"
+            "Generate one with: python scripts/make_synthetic.py"
+        )
     train = D.load_thyroidxl(root, "train")
     test = D.load_thyroidxl(root, "test")
 

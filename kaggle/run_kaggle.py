@@ -148,7 +148,8 @@ def main() -> None:
             ],
             cwd=REPO_DIR,
         )
-        run([sys.executable, "scripts/test_guards.py"], cwd=REPO_DIR)
+        run([sys.executable, "scripts/test_guards.py", "--data", str(data_dir)],
+            cwd=REPO_DIR)
 
     elif STAGE == "image":
         # Wired up when src/image.py lands (M3-M6).
