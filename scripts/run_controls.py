@@ -140,6 +140,15 @@ def main() -> None:
         }
         per_split[split] = (pts, df)
 
+        # Cached so later analyses do not re-read every mask. Patient level,
+        # largest nodule, with the label and TI-RADS joined on.
+        tirads = to_patient_level(df).set_index(S.PATIENT_ID)[S.TIRADS]
+        cached = pts.copy()
+        cached[S.TIRADS] = tirads.reindex(cached[S.PATIENT_ID]).to_numpy()
+        cached[S.COHORT] = f"thyroidxl_{split}"
+        cached.to_csv(out_dir / f"geometry_{split}.csv", index=False)
+        print(f"  cached geometry -> {out_dir / f'geometry_{split}.csv'}")
+
     if "train" in per_split and "test" in per_split:
         print("\n=== transfer: fit on train patients, evaluate on test ===")
         tr_pts, _ = per_split["train"]
