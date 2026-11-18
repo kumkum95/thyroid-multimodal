@@ -87,6 +87,11 @@ def load_csv_cohort(
         paths = raw[mapping[S.IMAGE_PATH]].astype(str)
     else:
         paths = df[S.IMAGE_ID]
+    # A CSV written on Windows carries backslash separators. On Linux those
+    # are ordinary filename characters, so joining them yields one long
+    # bogus filename and every image silently goes missing -- which an
+    # --allow-missing-images run would then paper over with noise.
+    paths = paths.str.replace('\\', '/', regex=False)
     df[S.IMAGE_PATH] = (
         paths.map(lambda p: str(Path(image_root) / p)) if image_root else paths
     )

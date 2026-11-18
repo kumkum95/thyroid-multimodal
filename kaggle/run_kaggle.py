@@ -24,6 +24,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 REPO_URL = "https://github.com/kumkum95/thyroid-multimodal.git"
@@ -32,9 +33,30 @@ WORKING = Path("/kaggle/working")
 OUTPUTS = WORKING / "outputs"
 
 # Set by editing this file before `kaggle kernels push`.
-STAGE = os.environ.get("DEX_STAGE", "week1")
+STAGE = os.environ.get("DEX_STAGE", "image")
 # Pin to a commit for a reproducible run; empty means current main.
 COMMIT = os.environ.get("DEX_COMMIT", "")
+
+# Arguments for STAGE="image". Sized to finish inside Kaggle's 9-hour kernel
+# limit rather than to match the published settings: EfficientNet-B4 at 384px
+# over 4 configs and 3 seeds is twelve trainings and does not fit.
+#
+# M3 and M6 first because they bracket the question that matters now. Mask
+# geometry alone already reaches 0.9602 on the test split and TI-RADS alone
+# 0.9287, so the open number is how much an image-only model gives up when it
+# is denied both -- that is M3. M6 is the fully fused upper end, and its gates
+# say where it is actually looking. M4 and M5 fill in the middle once these two
+# have run and the per-epoch cost is known.
+IMAGE_STAGE_ARGS = [
+    "--configs", "M3", "M6",
+    "--seeds", "0",
+    "--backbone", "efficientnet_b0",
+    "--image-size", "256",
+    "--batch-size", "8",
+    "--epochs", "20",
+    "--max-images", "6",
+    "--num-workers", "2",
+]
 
 # Candidate mount points for the real cohort, in order of preference. Kaggle
 # mounts attached datasets read-only under /kaggle/input/<slug>.
@@ -99,6 +121,68 @@ def clone_repo() -> str:
     return sha
 
 
+def hf_token() -> str | None:
+    """Read the Hugging Face token from Kaggle Secrets, never from the code.
+
+    ThyroidXL is gated: access is granted per account after accepting its
+    terms. Fetching it at run time under that account keeps this project from
+    redistributing it, which uploading a copy as a Kaggle Dataset would do.
+    """
+    token = os.environ.get("HF_TOKEN")
+    if token:
+        return token
+    try:
+        from kaggle_secrets import UserSecretsClient
+
+        return UserSecretsClient().get_secret("HF_TOKEN")
+    except Exception as exc:
+        print(f"  no HF_TOKEN secret available ({type(exc).__name__})")
+        return None
+
+
+def fetch_thyroidxl(target: Path) -> bool:
+    """Download images, masks and metadata from Hugging Face into `target`."""
+    token = hf_token()
+    if not token:
+        return False
+
+    from huggingface_hub import snapshot_download
+
+    target.mkdir(parents=True, exist_ok=True)
+    patterns = ["train/images/*", "test/images/*",
+                "train/masks/*", "test/masks/*",
+                "stats/*"]
+    for attempt in range(1, 5):
+        try:
+            snapshot_download(
+                "VNPT-AI/ThyroidXL", repo_type="dataset",
+                allow_patterns=patterns, local_dir=str(target),
+                max_workers=16, token=token,
+            )
+            break
+        except Exception as exc:
+            print(f"  attempt {attempt}: {type(exc).__name__}: {str(exc)[:120]}")
+            time.sleep(10 * attempt)
+    else:
+        print("  !! ThyroidXL download failed after 4 attempts")
+        return False
+
+    # The metadata CSVs are built here rather than committed, because the repo
+    # is public and the CSVs carry per-patient clinical fields.
+    run([sys.executable, "-c",
+         "import sys; sys.path.insert(0, '.');"
+         "from src.thyroidxl import build_table;"
+         f"[build_table(s, meta_dir={str(target)!r},"
+         f" image_root=f'{{s}}/images').to_csv("
+         f"  f'{target}/{{s}}.csv', index=False) for s in ('train','test')]"],
+        cwd=REPO_DIR)
+    counts = {d.name: len(list(d.glob('*')))
+              for d in (target / "train" / "images", target / "test" / "images")
+              if d.exists()}
+    print(f"  ThyroidXL fetched into {target}  {counts}")
+    return True
+
+
 def resolve_data() -> tuple[Path, bool]:
     """Return (data_dir, is_real). Falls back to the synthetic cohort."""
     for candidate in DATA_CANDIDATES:
@@ -106,7 +190,11 @@ def resolve_data() -> tuple[Path, bool]:
             print(f"  using attached dataset: {candidate}")
             return candidate, True
 
-    print("  no ThyroidXL dataset attached -- generating synthetic cohort")
+    target = WORKING / "data" / "thyroidxl"
+    if fetch_thyroidxl(target):
+        return target, True
+
+    print("  no ThyroidXL available -- generating synthetic cohort")
     print("  (synthetic results validate the pipeline, never the science)")
     target = WORKING / "data" / "thyroidxl_synthetic"
     run([sys.executable, "scripts/make_synthetic.py", "--out", str(target)],
@@ -159,6 +247,17 @@ def main() -> None:
                 "scripts/run_image.py does not exist yet at this commit. "
                 "Build the M3 image branch first, or run STAGE=week1."
             )
+        if not is_real:
+            # Six GPU-hours spent on deterministic noise would still produce a
+            # results.json full of plausible-looking AUCs. Fail now instead.
+            raise SystemExit(
+                "Refusing to run the image stage on the synthetic cohort. "
+                "ThyroidXL is gated, so the kernel needs an HF_TOKEN secret "
+                "(Add-ons > Secrets, label HF_TOKEN) from an account that has "
+                "accepted the dataset terms, or the dataset attached as a "
+                "private Kaggle Dataset. Set DEX_STAGE=week1 to exercise the "
+                "chain on synthetic data instead."
+            )
         if not runtime.get("cuda_available"):
             raise SystemExit(
                 "Refusing to train the image branch without a GPU: "
@@ -170,6 +269,7 @@ def main() -> None:
                 sys.executable, "scripts/run_image.py",
                 "--data", str(data_dir),
                 "--out", str(OUTPUTS / "image"),
+                *IMAGE_STAGE_ARGS,
             ],
             cwd=REPO_DIR,
         )
