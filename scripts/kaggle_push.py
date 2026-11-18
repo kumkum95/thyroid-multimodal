@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -255,6 +256,38 @@ def pull(cli: list[str], env: dict[str, str], attempts: int = 4) -> None:
           f"  Grab what you need from the kernel's Output tab in the browser.")
 
 
+STAGES_NEEDING_GPU = {"image"}
+
+
+def set_stage(stage: str) -> None:
+    """Pin the kernel's stage and request a GPU only if that stage needs one.
+
+    Kaggle script kernels take no environment variables, so the stage lives in
+    run_kaggle.py and has to be rewritten before the push. Asking for a GPU
+    also puts the run in the GPU queue, where a sixty-second credentials probe
+    can wait longer than it runs -- so enable_gpu follows the stage.
+    """
+    driver = KERNEL_DIR / "run_kaggle.py"
+    text = driver.read_text(encoding="utf-8")
+    pattern = re.compile(r'^STAGE = os\.environ\.get\("DEX_STAGE", "[a-z0-9_]+"\)$',
+                         re.MULTILINE)
+    if not pattern.search(text):
+        raise SystemExit(f"could not find the STAGE line in {driver}")
+    driver.write_text(
+        pattern.sub(f'STAGE = os.environ.get("DEX_STAGE", "{stage}")', text),
+        encoding="utf-8",
+    )
+
+    meta = read_metadata()
+    wants_gpu = stage in STAGES_NEEDING_GPU
+    if meta.get("enable_gpu") != wants_gpu:
+        meta["enable_gpu"] = wants_gpu
+        METADATA.write_text(
+            json.dumps(meta, indent=2) + "\n", encoding="utf-8"
+        )
+    print(f"  stage '{stage}'  gpu={wants_gpu}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--profile", default=None,
@@ -263,6 +296,9 @@ def main() -> None:
     ap.add_argument("--status", action="store_true", help="report status only")
     ap.add_argument("--pull", action="store_true", help="download last output")
     ap.add_argument("--no-wait", action="store_true", help="push without polling")
+    ap.add_argument("--stage", default=None,
+                    choices=["probe", "week1", "image"],
+                    help="stage to run; also decides whether a GPU is requested")
     ap.add_argument("--poll", type=int, default=60, help="seconds between polls")
     ap.add_argument("--timeout", type=int, default=5400, help="max seconds to wait")
     args = ap.parse_args()
@@ -293,6 +329,8 @@ def main() -> None:
 
     user = check_owner(cli, env)
     print(f"  pushing as '{user}'")
+    if args.stage:
+        set_stage(args.stage)
     run_cli(cli, ["kernels", "push", "-p", str(KERNEL_DIR)], env)
     print(f"\n  kernel: https://www.kaggle.com/code/{kid}")
 
