@@ -20,6 +20,20 @@ To add an account:
     KAGGLE_CONFIG_DIR=~/.kaggle-second kaggle auth login     # browser, OAuth
     # or drop that account's kaggle.json into ~/.kaggle-second/
 
+IMPORTANT, and it cost three runs to find: `kaggle kernels push` RESETS the
+kernel's Secrets association. A secret attached in the web UI is detached by
+the next push, and the kernel then fails with
+
+    ConnectionError: Connection error trying to communicate with service.
+
+which is the same message Kaggle returns for 403 and 429, so the text does not
+identify the cause. The run has no secret bound at all.
+
+So any run that needs a secret has to be started from the web UI, not from
+here: push the code with --no-wait, re-attach the secret in Add-ons > Secrets,
+then use "Save & Run All" in the editor. A UI-initiated version keeps its
+secrets. There is no API call that re-runs an existing version without pushing.
+
 Before pushing, the owner in kernel-metadata.json is checked against the
 authenticated account: pushing to someone else's namespace fails with an opaque
 error, so it is caught here instead.
