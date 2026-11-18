@@ -68,12 +68,40 @@ def main() -> None:
         tag += f"+LIMIT{args.limit}"
 
         def head_patients(frame, n):
-            keep = frame[S.PATIENT_ID].drop_duplicates().head(n)
+            """Keep n patients, balanced across both classes.
+
+            A plain head() of the patient list draws them in file order,
+            and on ThyroidXL that gives 40 benign patients and no
+            malignant ones, so every AUC comes back nan and the smoke
+            test proves nothing. Half from each class fixes that.
+            """
+            per_patient = frame[[S.PATIENT_ID, S.LABEL]].drop_duplicates(
+                subset=S.PATIENT_ID
+            )
+            keep = []
+            for label, want in ((0, n - n // 2), (1, n // 2)):
+                ids = per_patient.loc[
+                    per_patient[S.LABEL] == label, S.PATIENT_ID
+                ]
+                keep.extend(ids.head(want).tolist())
             return frame[frame[S.PATIENT_ID].isin(set(keep))].copy()
 
         train_df = head_patients(train_df, args.limit)
         val_df = head_patients(val_df, max(args.limit // 4, 20))
         test = head_patients(test, max(args.limit // 4, 20))
+
+    # Model selection, temperature scaling and the sensitivity threshold
+    # all need both classes in validation. Failing here names the cause;
+    # letting training run produces a nan AUC and selects nothing.
+    for frame, name in ((val_df, 'val'), (test, 'test')):
+        present = set(frame[S.LABEL].unique())
+        if present != {0, 1}:
+            raise SystemExit(
+                f'{name} split contains only class(es) {sorted(present)}. '
+                'Model selection, temperature scaling and the sensitivity '
+                'threshold all need both classes, so training would produce '
+                'a nan AUC and select nothing. Raise --limit or drop it.'
+            )
 
     print(f"\n=== {tag} ===")
     for frame, name in ((train_df, "train"), (val_df, "val"), (test, "test")):

@@ -223,6 +223,13 @@ def train_model(train_df: pd.DataFrame, val_df: pd.DataFrame, cfg: TrainConfig,
         logits, labels, _, _ = predict(model, val_loader, device)
         from sklearn.metrics import roc_auc_score
 
+        if len(set(labels.tolist())) < 2:
+            # One class in validation: AUC is undefined, so every
+            # comparison below is False and nothing is ever selected.
+            raise RuntimeError(
+                'validation split has a single class, so val AUC is '
+                'undefined and no model can be selected'
+            )
         val_auc = float(roc_auc_score(labels, logits))
         history.append(
             {"epoch": epoch, "train_loss": total / max(seen, 1), "val_auc": val_auc}
@@ -243,9 +250,18 @@ def train_model(train_df: pd.DataFrame, val_df: pd.DataFrame, cfg: TrainConfig,
             print(f"  early stop at epoch {epoch} (no gain for {stale} epochs)")
             break
 
-    model.load_state_dict(
-        torch.load(out_dir / f"{cfg.config}_seed{cfg.seed}_best.pt", map_location=device)
-    )
+    # A run whose val AUC never improved on the initial -1.0 sentinel --
+    # a nan AUC, or a single epoch that crashed -- writes no best file, and
+    # loading it unconditionally turns that into a FileNotFoundError that
+    # hides the real cause.
+    best_path = out_dir / f'{cfg.config}_seed{cfg.seed}_best.pt'
+    if not best_path.exists():
+        raise RuntimeError(
+            f'no best checkpoint at {best_path}: validation AUC never '
+            f'improved over {cfg.epochs} epoch(s), so no weights were '
+            'selected. Check the validation split and the loss.'
+        )
+    model.load_state_dict(torch.load(best_path, map_location=device))
     val_logits, val_labels, _, _ = predict(model, val_loader, device)
     temperature = fit_temperature(val_logits, val_labels)
     val_prob = 1 / (1 + np.exp(-val_logits / temperature))
