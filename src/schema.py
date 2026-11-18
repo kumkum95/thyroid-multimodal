@@ -46,15 +46,27 @@ def normalise_sex(series: pd.Series) -> pd.Series:
     value by value. An unexpected value set raises rather than guessing: silently
     inverting sex would quietly corrupt every subgroup result.
     """
-    if series.dtype == object:
+    # pandas 3 infers the `str` dtype for text columns, not `object`, so an
+    # `== object` test silently skips the string branch and falls through to
+    # numeric coercion, turning every 'M'/'F' into NaN without an error.
+    is_text = pd.api.types.is_string_dtype(series) or series.dtype == object
+    if is_text:
         text = series.astype("string").str.strip().str.lower()
-        if text.dropna().isin(SEX_STRING_ALIASES).all():
+        if text.dropna().isin(set(SEX_STRING_ALIASES)).all():
             return text.map(SEX_STRING_ALIASES).astype("Float64")
         # Fall through: numeric values stored as strings.
-        series = pd.to_numeric(series, errors="coerce")
 
     numeric = pd.to_numeric(series, errors="coerce")
     present = set(numeric.dropna().unique())
+
+    if not present:
+        if series.notna().any():
+            sample = sorted({str(v) for v in series.dropna().unique()})[:5]
+            raise ValueError(
+                f"sex column has values but none could be parsed: {sample}. "
+                "Expected {0,1}, {1,2}, or strings like 'M'/'F'."
+            )
+        return numeric.astype("Float64")      # genuinely empty column
 
     if present <= {0.0, 1.0}:
         mapping = {0.0: 0, 1.0: 1}          # 0 = male, 1 = female
