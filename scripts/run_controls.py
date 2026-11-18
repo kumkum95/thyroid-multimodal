@@ -147,19 +147,20 @@ def main() -> None:
         tx = transfer(tr_pts, te_pts, te_df)
         results["transfer"] = tx
         g = tx["mask_geometry"]
-        print(f"  mask geometry   AUC {g['auc']:.4f}  {g.get('auc_ci')}")
+        print(f"  mask geometry   AUC {g['auc']:.4f} "
+              f"[{g['auc_lo']:.4f}, {g['auc_hi']:.4f}]  "
+              f"ECE {g['ece']:.4f}")
         if "tirads_auc_same_patients" in tx:
             print(f"  TI-RADS         AUC {tx['tirads_auc_same_patients']:.4f}"
                   f"  (n={tx['n_with_tirads']})")
             d = tx["delong_geometry_vs_tirads"]
-            print(f"  DeLong geometry vs TI-RADS: p = {d.get('p'):.3g}")
+            print(f"  DeLong geometry vs TI-RADS: z = {d['z']:+.3f}, "
+                  f"p = {d['p']:.3g}")
 
     D.save_report(results, out_dir / "controls.json")
     print(f"\n  wrote {(out_dir / 'controls.json').resolve()}")
 
 
-if __name__ == "__main__":
-    main()
 
 
 # ----------------------------------------------------------------- transfer
@@ -211,7 +212,17 @@ def transfer(train_pts: pd.DataFrame, test_pts: pd.DataFrame,
             float(roc_auc_score(yte[usable], aligned[usable])), 4
         )
         out["n_with_tirads"] = int(usable.sum())
-        out["delong_geometry_vs_tirads"] = delong_test(
+        auc_a, auc_b, z, pval = delong_test(
             yte[usable], geom_prob[usable], aligned[usable]
         )
+        out["delong_geometry_vs_tirads"] = {
+            "auc_geometry": round(auc_a, 4),
+            "auc_tirads": round(auc_b, 4),
+            "z": round(float(z), 4),
+            "p": pval,
+        }
     return out
+
+
+if __name__ == "__main__":
+    main()
