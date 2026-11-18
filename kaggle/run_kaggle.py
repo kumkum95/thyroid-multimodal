@@ -28,12 +28,12 @@ import time
 from pathlib import Path
 
 REPO_URL = "https://github.com/kumkum95/thyroid-multimodal.git"
-REPO_DIR = Path("/kaggle/working/thyroid-multimodal")
+REPO_DIR = Path("/kaggle/tmp/thyroid-multimodal")
 WORKING = Path("/kaggle/working")
 OUTPUTS = WORKING / "outputs"
 
 # Set by editing this file before `kaggle kernels push`.
-STAGE = os.environ.get("DEX_STAGE", "image")
+STAGE = os.environ.get("DEX_STAGE", "probe")
 # Pin to a commit for a reproducible run; empty means current main.
 COMMIT = os.environ.get("DEX_COMMIT", "")
 
@@ -130,14 +130,28 @@ def hf_token() -> str | None:
     """
     token = os.environ.get("HF_TOKEN")
     if token:
+        print(f"  HF_TOKEN from environment ({len(token)} chars)")
         return token
-    try:
-        from kaggle_secrets import UserSecretsClient
 
-        return UserSecretsClient().get_secret("HF_TOKEN")
-    except Exception as exc:
-        print(f"  no HF_TOKEN secret available ({type(exc).__name__})")
-        return None
+    # Retried: the secrets backend is a network call and a single ConnectionError
+    # is not evidence that the secret is absent.
+    for attempt in range(1, 4):
+        try:
+            from kaggle_secrets import UserSecretsClient
+
+            token = UserSecretsClient().get_secret("HF_TOKEN")
+            if token:
+                print(f"  HF_TOKEN from Kaggle secrets ({len(token)} chars)")
+                return token
+            print("  HF_TOKEN secret is present but empty")
+            return None
+        except Exception as exc:
+            # The class name alone cannot distinguish "secret not attached to
+            # this notebook" from "backend unreachable", so print the message.
+            print(f"  secrets attempt {attempt}: {type(exc).__name__}: "
+                  f"{str(exc)[:300]}")
+            time.sleep(3 * attempt)
+    return None
 
 
 def fetch_thyroidxl(target: Path) -> bool:
@@ -274,8 +288,23 @@ def main() -> None:
             cwd=REPO_DIR,
         )
 
+    elif STAGE == "probe":
+        # Credentials and dataset reachability only. No training, no GPU time.
+        token = hf_token()
+        print(f"\n  token found: {bool(token)}")
+        if token:
+            from huggingface_hub import HfApi
+
+            api = HfApi(token=token)
+            print(f"  hf identity: {api.whoami().get('name')}")
+            files = api.list_repo_files("VNPT-AI/ThyroidXL", repo_type="dataset")
+            print(f"  ThyroidXL readable: {len(files)} files")
+            print(f"  sample: {sorted(files)[:3]}")
+
     else:
-        raise SystemExit(f"unknown STAGE: {STAGE!r} (expected 'week1' or 'image')")
+        raise SystemExit(
+            f"unknown STAGE: {STAGE!r} (expected 'probe', 'week1' or 'image')"
+        )
 
     print("\n" + "=" * 70)
     print("ARTIFACTS IN /kaggle/working/outputs")
