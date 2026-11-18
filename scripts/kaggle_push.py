@@ -20,6 +20,14 @@ To add an account:
     KAGGLE_CONFIG_DIR=~/.kaggle-second kaggle auth login     # browser, OAuth
     # or drop that account's kaggle.json into ~/.kaggle-second/
 
+`--pull` fetches the kernel's whole output, and the Kaggle CLI hands over the
+log only after every file. Anything the kernel leaves in /kaggle/working counts
+as output, so a run that stages a multi-gigabyte dataset there makes reading its
+log a multi-gigabyte download. run_kaggle.py therefore stages data and the git
+clone under /kaggle/tmp and writes only results to /kaggle/working. The CLI also
+SKIPS a file whose local copy is newer, so a stale local log is silently kept
+rather than refreshed -- delete the output directory before pulling a new run.
+
 IMPORTANT, and it cost three runs to find: `kaggle kernels push` RESETS the
 kernel's Secrets association. A secret attached in the web UI is detached by
 the next push, and the kernel then fails with

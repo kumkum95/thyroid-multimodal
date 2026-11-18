@@ -30,6 +30,9 @@ from pathlib import Path
 REPO_URL = "https://github.com/kumkum95/thyroid-multimodal.git"
 REPO_DIR = Path("/kaggle/tmp/thyroid-multimodal")
 WORKING = Path("/kaggle/working")
+# Scratch space that is NOT collected as kernel output. Data and the clone live
+# here; only results belong in WORKING.
+SCRATCH = Path("/kaggle/tmp")
 OUTPUTS = WORKING / "outputs"
 
 # Set by editing this file before `kaggle kernels push`.
@@ -215,13 +218,16 @@ def resolve_data() -> tuple[Path, bool]:
             print(f"  using attached dataset: {candidate}")
             return candidate, True
 
-    target = WORKING / "data" / "thyroidxl"
+    # Not under WORKING: everything there becomes kernel output, so a 6.87 GB
+    # cohort makes `kaggle kernels output` drag the entire dataset back before
+    # it will hand over the log.
+    target = SCRATCH / "data" / "thyroidxl"
     if fetch_thyroidxl(target):
         return target, True
 
     print("  no ThyroidXL available -- generating synthetic cohort")
     print("  (synthetic results validate the pipeline, never the science)")
-    target = WORKING / "data" / "thyroidxl_synthetic"
+    target = SCRATCH / "data" / "thyroidxl_synthetic"
     run([sys.executable, "scripts/make_synthetic.py", "--out", str(target)],
         cwd=REPO_DIR)
     return target, False
