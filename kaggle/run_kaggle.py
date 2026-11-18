@@ -133,6 +133,17 @@ def hf_token() -> str | None:
         print(f"  HF_TOKEN from environment ({len(token)} chars)")
         return token
 
+    # An attached Kaggle Dataset, preferred over Secrets. `kaggle kernels push`
+    # detaches a kernel's Secrets but keeps dataset_sources, because those are
+    # declared in kernel-metadata.json -- so a secret has to be re-attached by
+    # hand after every push, while a dataset does not.
+    for name in ("hf_token.txt", "token.txt", "hf_token"):
+        for path in sorted(Path("/kaggle/input").glob(f"*/{name}")):
+            value = path.read_text(encoding="utf-8").strip()
+            if value:
+                print(f"  HF_TOKEN from {path} ({len(value)} chars)")
+                return value
+
     # Retried: the secrets backend is a network call and a single ConnectionError
     # is not evidence that the secret is absent.
     for attempt in range(1, 4):
@@ -266,11 +277,12 @@ def main() -> None:
             # results.json full of plausible-looking AUCs. Fail now instead.
             raise SystemExit(
                 "Refusing to run the image stage on the synthetic cohort. "
-                "ThyroidXL is gated, so the kernel needs an HF_TOKEN secret "
-                "(Add-ons > Secrets, label HF_TOKEN) from an account that has "
-                "accepted the dataset terms, or the dataset attached as a "
-                "private Kaggle Dataset. Set DEX_STAGE=week1 to exercise the "
-                "chain on synthetic data instead."
+                "ThyroidXL is gated, so the kernel needs a Hugging Face "
+                "token from an account that accepted its terms. Attach a "
+                "private Kaggle Dataset containing hf_token.txt and list it in "
+                "kernel-metadata.json dataset_sources -- Kaggle Secrets are "
+                "detached by every `kernels push`, so they do not survive this "
+                "workflow. Set DEX_STAGE=week1 for synthetic data instead."
             )
         if not runtime.get("cuda_available"):
             raise SystemExit(
