@@ -33,7 +33,7 @@ WORKING = Path("/kaggle/working")
 OUTPUTS = WORKING / "outputs"
 
 # Set by editing this file before `kaggle kernels push`.
-STAGE = os.environ.get("DEX_STAGE", "probe")
+STAGE = os.environ.get("DEX_STAGE", "image")
 # Pin to a commit for a reproducible run; empty means current main.
 COMMIT = os.environ.get("DEX_COMMIT", "")
 
