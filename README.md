@@ -9,7 +9,7 @@ patient-level AUC, so there is no headroom to chase. This project measures,
 honestly, **what the clinical modality actually contributes** — and the answer
 may well be "less than the literature implies."
 
-Four gaps in the existing work, each mapped to an experiment:
+Six gaps in the existing work, each mapped to an experiment:
 
 | Gap | What nobody has done | Experiment |
 |---|---|---|
@@ -19,6 +19,47 @@ Four gaps in the existing work, each mapped to an experiment:
 | 4 | Checked performance by sex / age band | subgroup tables |
 | 5 | Tested whether a *fusion* model transports across centres | external validation |
 | 6 | Asked whether reported SOTA is inflated by mask shortcuts | controls A–D |
+
+## Results so far
+
+Patient level, ThyroidXL official test split (739 patients, 47.8% malignant),
+every model fitted on the 3354 train patients. Published comparators in italics.
+
+| Model | Inputs | Test AUC | Reads pixels? |
+|---|---|---|---|
+| M1 | age + sex | 0.6186 [0.584, 0.659] | no |
+| *published* | *image only, EfficientNet-B0* | *0.921* | yes |
+| M0 | TI-RADS only | 0.9287 [0.912, 0.945] | no |
+| M2 | age + sex + TI-RADS | 0.9404 [0.924, 0.955] | no |
+| Control B | mask geometry only | 0.9602 [0.947, 0.973] | no |
+| — | mask geometry + TI-RADS | **0.9858** | **no** |
+| *published* | *BioMedCLIP, image + mask* | *0.9939* | yes + mask |
+
+Three things follow, none of which required training a vision model:
+
+1. TI-RADS alone (0.9287) beats the published image-only model (0.921).
+2. Mask contour alone (0.9602) beats TI-RADS, significantly: DeLong z = +3.06,
+   p = 0.0022. Area alone manages 0.6286, so it is shape, not nodule size.
+3. Contour plus TI-RADS reaches 0.9858 against a published 0.9939 that uses a
+   vision-language model over images and masks. The entire learned-vision
+   apparatus is worth roughly +0.008 over two human-derived annotations.
+
+Mask geometry also recovers the radiologist's TI-RADS category at QWK 0.6545
+and Spearman +0.672, so the contour encodes much of the human's assessment --
+but not all of it: TI-RADS still adds +0.0256 over geometry (p = 3.8e-06), so
+the two are overlapping, not interchangeable. Calling their fusion circular
+would be wrong.
+
+## Gap status
+
+| Gap | Status | Evidence |
+|---|---|---|
+| 1 age and sex used at all | half | M1 = 0.6186 done; M4 needs the GPU run |
+| 2 clinical-only baseline | **closed** | M0 = 0.9287, M2 = 0.9404 |
+| 3 endogenous vs exogenous split | open | needs M4 vs M5 |
+| 4 performance by sex / age band | **closed for M0-M2** | subgroup tables in outputs/week1_real |
+| 5 does fusion transport across centres | open | DDTI and Stanford not yet run |
+| 6 is SOTA inflated by mask shortcuts | **closed for B** | geometry 0.9602; A, C, D outstanding |
 
 ## Why the design is deliberately plain
 
