@@ -40,19 +40,20 @@ STAGE = os.environ.get("DEX_STAGE", "image")
 # Pin to a commit for a reproducible run; empty means current main.
 COMMIT = os.environ.get("DEX_COMMIT", "")
 
-# Arguments for STAGE="image". Sized to finish inside Kaggle's 9-hour kernel
-# limit rather than to match the published settings: EfficientNet-B4 at 384px
-# over 4 configs and 3 seeds is twelve trainings and does not fit.
+# Arguments for STAGE="image". EfficientNet-B0 at 256px rather than the
+# published B4 at 384px, so twelve trainings fit Kaggle's 9-hour limit.
 #
-# M3 and M6 first because they bracket the question that matters now. Mask
-# geometry alone already reaches 0.9602 on the test split and TI-RADS alone
-# 0.9287, so the open number is how much an image-only model gives up when it
-# is denied both -- that is M3. M6 is the fully fused upper end, and its gates
-# say where it is actually looking. M4 and M5 fill in the middle once these two
-# have run and the per-epoch cost is known.
+# All four configurations and three seeds, now that per-epoch cost is measured.
+# The first run did M3 and M6 on one seed in 3327s, about 83s per epoch, so
+# 4 x 3 x 20 epochs is roughly 5.5 hours and fits the 9-hour limit.
+#
+# Three seeds rather than one because the result that needs them is a null:
+# M6 scored 0.9368 against M3's 0.9421, a gap of 0.005 on 739 patients, which
+# a single seed cannot separate from noise. M4 and M5 are what Gap 3 turns on,
+# since they isolate exogenous demographics from the image-derived TI-RADS.
 IMAGE_STAGE_ARGS = [
-    "--configs", "M3", "M6",
-    "--seeds", "0",
+    "--configs", "M3", "M4", "M5", "M6",
+    "--seeds", "0", "1", "2",
     "--backbone", "efficientnet_b0",
     "--image-size", "256",
     "--batch-size", "8",
