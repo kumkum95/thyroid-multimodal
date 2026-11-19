@@ -31,6 +31,9 @@ every model fitted on the 3354 train patients. Published comparators in italics.
 | *published* | *image only, EfficientNet-B0* | *0.921* | yes |
 | M0 | TI-RADS only | 0.9287 [0.912, 0.945] | no |
 | M2 | age + sex + TI-RADS | 0.9404 [0.924, 0.955] | no |
+| M6 | image + age + sex + TI-RADS | 0.9368 (ECE 0.1912) | yes |
+| M2 | — see above — | 0.9404 | no |
+| M3 | image only | 0.9421 (ECE 0.0541) | yes |
 | Control B | mask geometry only | 0.9602 [0.947, 0.973] | no |
 | — | mask geometry + TI-RADS | **0.9858** | **no** |
 | *published* | *BioMedCLIP, image + mask* | *0.9939* | yes + mask |
@@ -44,6 +47,19 @@ Three things follow, none of which required training a vision model:
    vision-language model over images and masks. The entire learned-vision
    apparatus is worth roughly +0.008 over two human-derived annotations.
 
+Fusion did not help. M6, with every input available, scored 0.9368 against
+M3's 0.9421 on image alone, and its calibration error more than tripled, from
+0.0541 to 0.1912. The AUC difference is 0.005 on 739 patients from a single
+seed, which is inside the noise -- so the claim is "no gain", not "harm", until
+more seeds and a paired DeLong test are in. The calibration gap is large enough
+to be worth reporting now, and is consistent with the 21.6-point train/test
+prevalence shift being amplified by a model with more parameters to overfit.
+
+Note also that M3 at 0.9421 already exceeds the published image-only 0.921,
+using EfficientNet-B0 at 256px for 20 epochs rather than the published B4 at
+384px -- a deliberately reduced setting chosen to fit Kaggle's 9-hour limit, so
+this is a floor on image-only performance, not a ceiling.
+
 Mask geometry also recovers the radiologist's TI-RADS category at QWK 0.6545
 and Spearman +0.672, so the contour encodes much of the human's assessment --
 but not all of it: TI-RADS still adds +0.0256 over geometry (p = 3.8e-06), so
@@ -54,9 +70,9 @@ would be wrong.
 
 | Gap | Status | Evidence |
 |---|---|---|
-| 1 age and sex used at all | half | M1 = 0.6186 done; M4 needs the GPU run |
+| 1 age and sex used at all | half | M1 = 0.6186, M6 = 0.9368 done; M4 still needed |
 | 2 clinical-only baseline | **closed** | M0 = 0.9287, M2 = 0.9404 |
-| 3 endogenous vs exogenous split | open | needs M4 vs M5 |
+| 3 endogenous vs exogenous split | open | needs M4 vs M5; M3 and M6 bracket them |
 | 4 performance by sex / age band | **closed for M0-M2** | subgroup tables in outputs/week1_real |
 | 5 does fusion transport across centres | open | DDTI and Stanford not yet run |
 | 6 is SOTA inflated by mask shortcuts | **closed for B** | geometry 0.9602; A, C, D outstanding |
