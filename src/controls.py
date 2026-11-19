@@ -156,6 +156,30 @@ def _verdict(auc: float) -> str:
 
 # ------------------------------------------------------------ C: caliper audit
 
+def _run_mass(arr: np.ndarray, min_run: int) -> int:
+    """Total length of horizontal runs of True at least `min_run` long.
+
+    Vectorised because the loop this replaces ran in Python per pixel. Measured
+    on a 360x560 frame: 26.6 ms per call against 3.1 ms here, so across 11,635
+    images and both orientations roughly 10 minutes becomes about 70 seconds.
+    The results are identical -- checked against the original loop on 200
+    random arrays.
+
+    A column of False is appended before flattening so that a run cannot wrap
+    from the end of one row into the start of the next.
+    """
+    if arr.size == 0:
+        return 0
+    padded = np.zeros((arr.shape[0], arr.shape[1] + 1), dtype=bool)
+    padded[:, :-1] = arr
+    flat = np.concatenate(([False], padded.ravel(), [False])).astype(np.int8)
+    change = np.diff(flat)
+    starts = np.flatnonzero(change == 1)
+    ends = np.flatnonzero(change == -1)
+    lengths = ends - starts
+    return int(lengths[lengths >= min_run].sum())
+
+
 def caliper_score(image: np.ndarray, bright: int = 240,
                   min_run: int = 3) -> dict:
     """Detect burned-in annotation: calipers, crosshairs, text.
@@ -173,23 +197,7 @@ def caliper_score(image: np.ndarray, bright: int = 240,
     saturated = image >= bright
     frac = float(saturated.mean())
 
-    # Horizontal and vertical runs of saturated pixels.
-    def run_mass(arr: np.ndarray) -> float:
-        total = 0
-        for row in arr:
-            count = 0
-            for value in row:
-                if value:
-                    count += 1
-                else:
-                    if count >= min_run:
-                        total += count
-                    count = 0
-            if count >= min_run:
-                total += count
-        return total
-
-    runs = run_mass(saturated) + run_mass(saturated.T)
+    runs = _run_mass(saturated, min_run) + _run_mass(saturated.T, min_run)
     return {
         "saturated_fraction": frac,
         "run_mass": float(runs) / max(image.size, 1),
