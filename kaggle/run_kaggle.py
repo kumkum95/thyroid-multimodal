@@ -11,7 +11,7 @@ What it does, in order:
      notebook cell, so a kernel run is reproducible from a commit SHA.
   3. Resolves a data source: a mounted Kaggle Dataset if one is attached,
      otherwise the synthetic cohort.
-  4. Runs the stage named by STAGE.
+  4. Runs the stage named by kaggle/run_config.json in the clone.
 
 Stage "week1" is CPU-only tabular work. It is here because it proves the whole
 chain -- clone, import, split, evaluate, write outputs -- works on Kaggle before
@@ -35,7 +35,11 @@ WORKING = Path("/kaggle/working")
 SCRATCH = Path("/kaggle/tmp")
 OUTPUTS = WORKING / "outputs"
 
-# Set by editing this file before `kaggle kernels push`.
+# Fallback only. The real stage comes from kaggle/run_config.json in the cloned
+# repo -- see load_run_config(). ApiSaveKernelRequest carries no secrets field,
+# so every `kaggle kernels push` replaces the kernel config and detaches its
+# Secrets; reading the stage from the repo means a change of plan needs a commit
+# and a re-run from the editor, not a push, and the secret survives.
 STAGE = os.environ.get("DEX_STAGE", "image")
 # Pin to a commit for a reproducible run; empty means current main.
 COMMIT = os.environ.get("DEX_COMMIT", "")
@@ -234,14 +238,34 @@ def resolve_data() -> tuple[Path, bool]:
     return target, False
 
 
+def load_run_config() -> tuple[str, list[str]]:
+    """Stage and arguments from the cloned repo, falling back to this file.
+
+    This is the whole point of the bootstrap: the pushed script stays fixed, and
+    what the kernel actually runs is version-controlled in the repo. A new
+    experiment is a commit, not a push, so the HF_TOKEN secret is not detached.
+    """
+    path = REPO_DIR / "kaggle" / "run_config.json"
+    if not path.exists():
+        print(f"  no {path.name} in repo; using built-in stage {STAGE!r}")
+        return STAGE, list(IMAGE_STAGE_ARGS)
+    config = json.loads(path.read_text(encoding="utf-8"))
+    stage = config.get("stage", STAGE)
+    args = [str(a) for a in config.get("args", [])]
+    print(f"  run_config.json: stage {stage!r}, {len(args)} args")
+    return stage, args
+
+
 def main() -> None:
     OUTPUTS.mkdir(parents=True, exist_ok=True)
     runtime = report_runtime()
     sha = clone_repo()
+    stage, stage_args = load_run_config()
     data_dir, is_real = resolve_data()
 
     manifest = {
-        "stage": STAGE,
+        "stage": stage,
+        "stage_args": stage_args,
         "commit": sha,
         "data_dir": str(data_dir),
         "data_is_real": is_real,
@@ -253,10 +277,10 @@ def main() -> None:
     print(f"\n  manifest -> {OUTPUTS / 'run_manifest.json'}\n")
 
     print("=" * 70)
-    print(f"STAGE: {STAGE}")
+    print(f"STAGE: {stage}")
     print("=" * 70)
 
-    if STAGE == "week1":
+    if stage == "week1":
         # Tabular, CPU-bound. Present so the chain is verified on Kaggle before
         # GPU training is layered on top.
         run(
@@ -271,13 +295,13 @@ def main() -> None:
         run([sys.executable, "scripts/test_guards.py", "--data", str(data_dir)],
             cwd=REPO_DIR)
 
-    elif STAGE == "image":
+    elif stage == "image":
         # Wired up when src/image.py lands (M3-M6).
         script = REPO_DIR / "scripts" / "run_image.py"
         if not script.exists():
             raise SystemExit(
                 "scripts/run_image.py does not exist yet at this commit. "
-                "Build the M3 image branch first, or run STAGE=week1."
+                "Build the M3 image branch first, or set stage to week1."
             )
         if not is_real:
             # Six GPU-hours spent on deterministic noise would still produce a
@@ -289,7 +313,7 @@ def main() -> None:
                 "private Kaggle Dataset containing hf_token.txt and list it in "
                 "kernel-metadata.json dataset_sources -- Kaggle Secrets are "
                 "detached by every `kernels push`, so they do not survive this "
-                "workflow. Set DEX_STAGE=week1 for synthetic data instead."
+                "workflow. Set stage to week1 for synthetic data instead."
             )
         if not runtime.get("cuda_available"):
             raise SystemExit(
@@ -302,12 +326,12 @@ def main() -> None:
                 sys.executable, "scripts/run_image.py",
                 "--data", str(data_dir),
                 "--out", str(OUTPUTS / "image"),
-                *IMAGE_STAGE_ARGS,
+                *stage_args,
             ],
             cwd=REPO_DIR,
         )
 
-    elif STAGE == "probe":
+    elif stage == "probe":
         # Credentials and dataset reachability only. No training, no GPU time.
         token = hf_token()
         print(f"\n  token found: {bool(token)}")
@@ -322,7 +346,7 @@ def main() -> None:
 
     else:
         raise SystemExit(
-            f"unknown STAGE: {STAGE!r} (expected 'probe', 'week1' or 'image')"
+            f"unknown stage: {stage!r} (expected 'probe', 'week1' or 'image')"
         )
 
     print("\n" + "=" * 70)
