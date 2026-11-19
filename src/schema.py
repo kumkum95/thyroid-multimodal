@@ -36,6 +36,12 @@ SEX_STRING_ALIASES = {
     "f": 1, "female": 1, "woman": 1,
 }
 
+# Recorded as explicitly unknown rather than left blank. DDTI writes "u" for 15
+# of its 390 cases. These become NaN: missingness is the truth about them, and
+# assigning either sex would invent a subgroup membership that the subgroup
+# tables then report as fact.
+SEX_UNKNOWN_TOKENS = {"u", "unknown", "unk", "other", "n/a", "na", "", "-", "?"}
+
 
 def normalise_sex(series: pd.Series) -> pd.Series:
     """Map any common sex encoding onto 0 = male, 1 = female.
@@ -52,6 +58,7 @@ def normalise_sex(series: pd.Series) -> pd.Series:
     is_text = pd.api.types.is_string_dtype(series) or series.dtype == object
     if is_text:
         text = series.astype("string").str.strip().str.lower()
+        text = text.mask(text.isin(SEX_UNKNOWN_TOKENS))
         if text.dropna().isin(set(SEX_STRING_ALIASES)).all():
             return text.map(SEX_STRING_ALIASES).astype("Float64")
         # Fall through: numeric values stored as strings.
