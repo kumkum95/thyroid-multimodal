@@ -87,9 +87,34 @@ Paired DeLong on the seed-averaged ensembles, same 739 patients:
 | M3 vs M6 | +0.0096 | +1.054 | 0.292 |
 | M5 vs M6 | +0.0012 | +0.201 | 0.841 |
 
-**No fusion configuration beats the image alone.** M5 and M6 are statistically
-indistinguishable from M3, and M4 is significantly worse. Adding TI-RADS to an
-image model changes nothing measurable; adding age and sex makes it unstable.
+**RETRACTED. These runs did not fuse anything.** The saved gates show every
+multimodal configuration drove one modality to 1.0000 and the rest to 0.0000:
+
+| Config | seed 0 | seed 1 | seed 2 |
+|---|---|---|---|
+| M4 | exo 1.0000 | image 1.0000 | exo 1.0000 |
+| M5 | endo 1.0000 | endo 0.9434 | endo 1.0000 |
+| M6 | endo 0.9871 | endo 1.0000 | endo 1.0000 |
+
+So M5 and M6 were TI-RADS-only models with the image branch switched off, and
+M4 was a coin flip between age-and-sex-only (0.5811, 0.6276, against M1's
+0.6186) and image-only (0.9513). The earlier reading of this table -- that M5
+and M6 being indistinguishable from M3 shows fusion adds nothing -- does not
+follow: two unrelated single-modality models happening to score alike says
+nothing about fusion. Gap 3 is reopened.
+
+One incidental observation survives, and it is informative. Given a free choice
+between the image and TI-RADS, the gate discarded the image in three of three
+seeds. With a saturating softmax that is a hard switch rather than a weighing,
+but the optimiser consistently preferred the radiologist's category to the
+pixels. Note also that M4's gate chose the *worse* modality in two of three
+seeds, so the choice tracks early-training dynamics rather than final utility.
+
+The architecture has since been fixed -- softmax temperature 2.0, a five-epoch
+warmup blending gates toward uniform, and a normalised-entropy penalty of 0.05
+in the loss. On a short real-image check the gates now mix: M4 at image 0.559 /
+exo 0.441, M6 at image 0.594 / exo 0.152 / endo 0.254. The twelve runs need
+repeating before Gap 3 can be answered.
 
 **M4's instability is our architecture's fault, not a result about
 demographics.** Two of three seeds landed at 0.5811 and 0.6276, within noise of
@@ -124,9 +149,9 @@ image models are not mainly reading calipers.
 
 | Gap | Status | Evidence |
 |---|---|---|
-| 1 age and sex used at all | **closed** | M1 = 0.6186; M4 adds nothing and destabilises |
+| 1 age and sex used at all | half | M1 = 0.6186; M4 needs the re-run after the gate fix |
 | 2 clinical-only baseline | **closed** | M0 = 0.9287, M2 = 0.9404 |
-| 3 endogenous vs exogenous split | **closed** | M4 vs M5 run; neither beats M3 |
+| 3 endogenous vs exogenous split | reopened | gates were saturated; re-run pending |
 | 4 performance by sex / age band | **closed for M0-M2** | subgroup tables in outputs/week1_real |
 | 5 does fusion transport across centres | **partial** | DDTI and TN3K both negative; needs a labelled cohort for fusion |
 | 6 is SOTA inflated by mask shortcuts | **closed** | B 0.9602, C 0.593, D passes |

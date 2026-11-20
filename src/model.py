@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -48,6 +49,22 @@ class ModelConfig:
     dropout: float = 0.25
     pretrained: bool = True
     n_tirads: int = 5
+
+    # A plain softmax over modalities saturates. Measured on the first real
+    # run, every multimodal configuration drove one gate to 1.0000 and the rest
+    # to 0.0000, so M5 and M6 were TI-RADS-only models with the image branch
+    # switched off, and M4 was a coin flip between age-and-sex-only (0.58, 0.63)
+    # and image-only (0.95). Nothing was ever fused.
+    #
+    # Three knobs against that, in increasing order of force:
+    #   gate_temperature     softens the softmax
+    #   gate_warmup_epochs   blends gates toward uniform early, so every branch
+    #                        receives gradient before any of them can win
+    #   gate_entropy_weight  penalises a low-entropy gate in the loss, which is
+    #                        what actually stops logits growing without bound
+    gate_temperature: float = 2.0
+    gate_warmup_epochs: int = 5
+    gate_entropy_weight: float = 0.05
 
     @property
     def uses_image(self) -> bool:
@@ -199,6 +216,10 @@ class DexThyroid(nn.Module):
         self.dropout = nn.Dropout(cfg.dropout)
         self.head = nn.Linear(d, 1)       # linear, for per-modality attribution
 
+        # 0 means gates are forced uniform, 1 means fully learned. The training
+        # loop ramps it over gate_warmup_epochs; inference always uses 1.
+        self.gate_blend = 1.0
+
     def forward(
         self,
         images: torch.Tensor | None = None,
@@ -233,11 +254,26 @@ class DexThyroid(nn.Module):
         if len(parts) == 1:
             fused = parts[0]
         else:
-            gates = torch.softmax(self.gate(torch.cat(parts, dim=-1)), dim=-1)
+            logits = self.gate(torch.cat(parts, dim=-1)) / self.cfg.gate_temperature
+            learned = torch.softmax(logits, dim=-1)
+            if self.gate_blend < 1.0:
+                # Blending toward uniform keeps every branch's gradient alive
+                # while the backbone is still useless. Without it the cheap
+                # clinical branch wins within an epoch or two and the image
+                # branch, multiplied by a gate of zero, never recovers.
+                uniform = torch.full_like(learned, 1.0 / len(parts))
+                gates = (1.0 - self.gate_blend) * uniform + self.gate_blend * learned
+            else:
+                gates = learned
             fused = sum(gates[:, i : i + 1] * p for i, p in enumerate(parts))
             # Reported per cohort: if the TI-RADS gate dominates internally but
             # collapses externally, that is itself a result.
             out["gates"] = gates
+            # Mean negative entropy, for the loss to penalise. Normalised by
+            # log(n) so the weight means the same thing for two or three
+            # modalities.
+            entropy = -(gates.clamp_min(1e-8).log() * gates).sum(-1).mean()
+            out["gate_entropy"] = entropy / float(np.log(len(parts)))
 
         out["logit"] = self.head(self.dropout(fused)).squeeze(-1)
         return out

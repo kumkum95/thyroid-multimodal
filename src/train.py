@@ -33,6 +33,9 @@ from .model import CONFIGS, build_model
 class TrainConfig:
     config: str = "M6"
     backbone: str = "efficientnet_b4"
+    gate_temperature: float = 2.0
+    gate_warmup_epochs: int = 5
+    gate_entropy_weight: float = 0.05
     image_size: int = 384
     max_images: int = 6
     batch_size: int = 8
@@ -101,6 +104,9 @@ def forward_batch(model, batch, device):
 def predict(model, loader, device) -> tuple[np.ndarray, np.ndarray, list[str], np.ndarray | None]:
     """Patient-level logits, labels, ids and mean modality gates."""
     model.eval()
+    # Always the learned gate at inference, whatever the warmup left behind.
+    if hasattr(model, "gate_blend"):
+        model.gate_blend = 1.0
     logits, labels, ids, gates = [], [], [], []
     for batch in loader:
         out = forward_batch(model, batch, device)
@@ -161,6 +167,25 @@ def save_checkpoint(path: Path, model, optimiser, scaler, epoch: int,
     tmp.replace(path)
 
 
+def _loss_with_gate_penalty(model, batch, device, y, loss_fn, cfg):
+    """Classification loss plus a penalty on a collapsed modality gate.
+
+    The penalty is what keeps the softmax from saturating. Without it the first
+    real run drove every multimodal gate to exactly 1.0000 and 0.0000, so no
+    configuration fused anything: M5 and M6 ran as TI-RADS-only models with the
+    image branch switched off. Warmup alone cannot prevent that, because once
+    blending ends nothing stops the gate logits growing without bound.
+    """
+    out = forward_batch(model, batch, device)
+    loss = loss_fn(out["logit"], y)
+    weight = getattr(cfg, "gate_entropy_weight", 0.0)
+    if weight and "gate_entropy" in out:
+        # gate_entropy is normalised entropy in [0, 1]; 1 is uniform. Rewarding
+        # it is the same as penalising collapse.
+        loss = loss - weight * out["gate_entropy"]
+    return loss
+
+
 def train_model(train_df: pd.DataFrame, val_df: pd.DataFrame, cfg: TrainConfig,
                 out_dir: Path, resume: bool = True) -> dict:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -172,7 +197,13 @@ def train_model(train_df: pd.DataFrame, val_df: pd.DataFrame, cfg: TrainConfig,
     train_loader = make_loader(train_df, specs, cfg, train=True)
     val_loader = make_loader(val_df, specs, cfg, train=False)
 
-    model = build_model(cfg.config, backbone=cfg.backbone).to(device)
+    model = build_model(
+        cfg.config,
+        backbone=cfg.backbone,
+        gate_temperature=cfg.gate_temperature,
+        gate_warmup_epochs=cfg.gate_warmup_epochs,
+        gate_entropy_weight=cfg.gate_entropy_weight,
+    ).to(device)
 
     backbone_params, head_params = [], []
     for name, param in model.named_parameters():
@@ -202,18 +233,26 @@ def train_model(train_df: pd.DataFrame, val_df: pd.DataFrame, cfg: TrainConfig,
 
     for epoch in range(start_epoch, cfg.epochs):
         model.train()
+        # Gates are forced uniform at epoch 0 and fully learned from
+        # gate_warmup_epochs onward, so every branch trains before any can win.
+        warmup = getattr(model.cfg, "gate_warmup_epochs", 0)
+        model.gate_blend = 1.0 if warmup <= 0 else min(1.0, epoch / warmup)
         started, total, seen = time.time(), 0.0, 0
         for batch in train_loader:
             optimiser.zero_grad(set_to_none=True)
             y = batch["label"].to(device)
             if scaler is not None:
                 with torch.amp.autocast("cuda"):
-                    loss = loss_fn(forward_batch(model, batch, device)["logit"], y)
+                    loss = _loss_with_gate_penalty(
+                        model, batch, device, y, loss_fn, cfg
+                    )
                 scaler.scale(loss).backward()
                 scaler.step(optimiser)
                 scaler.update()
             else:
-                loss = loss_fn(forward_batch(model, batch, device)["logit"], y)
+                loss = _loss_with_gate_penalty(
+                    model, batch, device, y, loss_fn, cfg
+                )
                 loss.backward()
                 optimiser.step()
             total += loss.detach().item() * len(y)

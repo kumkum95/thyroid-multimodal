@@ -1,14 +1,27 @@
 {
   "stage": "image",
   "args": [
-    "--configs", "M3", "M4", "M5", "M6",
-    "--seeds", "0", "1", "2",
-    "--backbone", "efficientnet_b0",
-    "--image-size", "256",
-    "--batch-size", "8",
-    "--epochs", "20",
-    "--max-images", "6",
-    "--num-workers", "2"
+    "--configs",
+    "M3",
+    "M4",
+    "M5",
+    "M6",
+    "--seeds",
+    "0",
+    "1",
+    "2",
+    "--backbone",
+    "efficientnet_b0",
+    "--image-size",
+    "256",
+    "--batch-size",
+    "8",
+    "--epochs",
+    "20",
+    "--max-images",
+    "6",
+    "--num-workers",
+    "2"
   ],
-  "_why": "Read from the cloned repo at run time, not from the pushed script. ApiSaveKernelRequest has no secrets field, so every `kaggle kernels push` replaces the kernel config and detaches its Secrets. Changing this file and re-running from the Kaggle editor therefore changes what the kernel does without a push, and the HF_TOKEN secret stays attached."
+  "_why": "Read from the cloned repo at run time, not from the pushed script. ApiSaveKernelRequest has no secrets field, so every `kaggle kernels push` replaces the kernel config and detaches its Secrets. Changing this file and re-running from the Kaggle editor therefore changes what the kernel does without a push, and the HF_TOKEN secret stays attached. Re-running all twelve after the gate-collapse fix (temperature, warmup, entropy penalty)."
 }
