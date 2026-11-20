@@ -66,16 +66,70 @@ but not all of it: TI-RADS still adds +0.0256 over geometry (p = 3.8e-06), so
 the two are overlapping, not interchangeable. Calling their fusion circular
 would be wrong.
 
+## Image and fusion models
+
+Four configurations, three seeds each, EfficientNet-B0 at 256px for 20 epochs on
+2x T4. Patient level on the official test split, 739 patients.
+
+| Config | Inputs | seed 0 | seed 1 | seed 2 | mean | sd | ensemble | mean ECE |
+|---|---|---|---|---|---|---|---|---|
+| M3 | image | 0.9421 | 0.9287 | 0.9373 | 0.9360 | 0.0068 | 0.9464 | 0.0814 |
+| M4 | image + age + sex | 0.5811 | 0.9513 | 0.6276 | 0.7200 | **0.2017** | 0.9254 | 0.1728 |
+| M5 | image + TI-RADS | 0.9353 | 0.9379 | 0.9349 | 0.9361 | 0.0016 | 0.9379 | 0.0945 |
+| M6 | image + age + sex + TI-RADS | 0.9368 | 0.9245 | 0.9288 | 0.9301 | 0.0062 | 0.9368 | 0.1741 |
+
+Paired DeLong on the seed-averaged ensembles, same 739 patients:
+
+| Comparison | Difference | z | p |
+|---|---|---|---|
+| M3 vs M4 | +0.0210 | +3.262 | **0.00111** |
+| M3 vs M5 | +0.0084 | +0.898 | 0.369 |
+| M3 vs M6 | +0.0096 | +1.054 | 0.292 |
+| M5 vs M6 | +0.0012 | +0.201 | 0.841 |
+
+**No fusion configuration beats the image alone.** M5 and M6 are statistically
+indistinguishable from M3, and M4 is significantly worse. Adding TI-RADS to an
+image model changes nothing measurable; adding age and sex makes it unstable.
+
+**M4's instability is our architecture's fault, not a result about
+demographics.** Two of three seeds landed at 0.5811 and 0.6276, within noise of
+M1's age-and-sex-only 0.6186, and their validation AUCs were 0.6137 and 0.5936 --
+so those runs failed to train rather than overfitting. The likely mechanism is
+the softmax gate collapsing onto the exogenous branch early and starving the
+image branch of gradient, which is exactly what the gates did in a smoke test
+with uninformative images (image 0.0004, exogenous 0.9965). This should be
+reported as a fusion-stability finding and fixed, not presented as evidence
+that demographics are useless -- M1 already says that more cleanly.
+
+**Fusion roughly doubles calibration error**, consistently across seeds: mean
+ECE 0.0814 for M3 against 0.1741 for M6, against a 21.6-point train/test
+prevalence shift that a larger model has more capacity to overfit.
+
+## Control C: burned-in annotation
+
+All 11,635 images scored for near-saturated straight runs, aggregated to
+patients by mean.
+
+| Split | Benign | Malignant | p | Annotation-only AUC |
+|---|---|---|---|---|
+| train (3354) | 0.012814 | 0.008202 | 2.5e-16 | 0.5927 |
+| test (739) | 0.012347 | 0.007958 | 8.0e-06 | 0.5936 |
+
+Burned-in annotation does differ by class, highly significantly, and in the
+direction opposite to the obvious guess: **benign** scans carry more overlay.
+But it is a weak predictor at 0.593, so it cannot account for M3's 0.9360. The
+image models are not mainly reading calipers.
+
 ## Gap status
 
 | Gap | Status | Evidence |
 |---|---|---|
-| 1 age and sex used at all | half | M1 = 0.6186, M6 = 0.9368 done; M4 still needed |
+| 1 age and sex used at all | **closed** | M1 = 0.6186; M4 adds nothing and destabilises |
 | 2 clinical-only baseline | **closed** | M0 = 0.9287, M2 = 0.9404 |
-| 3 endogenous vs exogenous split | open | needs M4 vs M5; M3 and M6 bracket them |
+| 3 endogenous vs exogenous split | **closed** | M4 vs M5 run; neither beats M3 |
 | 4 performance by sex / age band | **closed for M0-M2** | subgroup tables in outputs/week1_real |
-| 5 does fusion transport across centres | open | DDTI and Stanford not yet run |
-| 6 is SOTA inflated by mask shortcuts | **closed for B** | geometry 0.9602; A, C, D outstanding |
+| 5 does fusion transport across centres | **partial** | DDTI and TN3K both negative; needs a labelled cohort for fusion |
+| 6 is SOTA inflated by mask shortcuts | **closed** | B 0.9602, C 0.593, D passes |
 
 ## Why the design is deliberately plain
 
